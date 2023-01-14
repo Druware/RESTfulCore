@@ -37,4 +37,8 @@ public class RESTObjectList<T : RESTObject> : RESTResultObject {
             info = with!["info"] as! [String]
         }
     }
+    
+    required public init() {
+        super.init()
+    }
 }

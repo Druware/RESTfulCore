@@ -8,7 +8,7 @@
 import Foundation
 
 open class RESTResultObject {
-    public init() { }
+    required public init() { }
     required public init(with: [String: Any]?) { }
 }
 
@@ -19,7 +19,7 @@ open class RESTObject : RESTResultObject, Hashable, Codable {
     }
     
     // MARK: Constructors
-    public override init() {
+    public required init() {
         super.init()
     }
     

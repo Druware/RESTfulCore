@@ -16,7 +16,7 @@ public class Player : RESTObject, Identifiable {
     public var playerId: Int64?
     public var playerName: String?
     
-    public override init() {
+    public required init() {
         // an empty init for put/post methods to use
         super.init()
     }
@@ -105,7 +105,7 @@ public class Player : RESTObject, Identifiable {
         try super.encode(to: encoder)
         var container = encoder.container(keyedBy: CodingKeys.self)
         
-        try container.encode(playerId, forKey: .playerId)
+        if (playerId != nil) { try container.encode(playerId, forKey: .playerId) }
         try container.encode(playerName, forKey: .playerName)
     }
     
