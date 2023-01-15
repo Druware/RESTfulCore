@@ -33,6 +33,7 @@ public class Player : RESTObject, Identifiable {
         playerId = with!["playerId"] as? Int64
         playerName = with!["playerName"] as? String
     }
+    
     /*
     public func delete() -> Bool {
         connection.delete(
@@ -147,6 +148,32 @@ extension Player {
         let result : Player? = try await connection.get(path: Player.path, id: "\(id)")
         return result
     }
+    
+    /// Player.get() fetches a Player from the server referenced by the Id
+    /// passed to the server.
+    ///
+    /// # Notes#
+    /// An active API.Connection is required.
+    ///
+    /// - Parameters:
+    ///   - connection: A Connection instance, usually a shared instance
+    ///   - id: an Int64 id representing a tag
+    ///   - completion: A closure function that returns the resulting APITag
+    ///   - failure: If an error occurs, the failure closure is called with the
+    ///              error condition in the result
+    public static func get(connection: Connection, id: Int64, completion: @escaping (Result<Player?, Error>) -> Void ) {
+        connection.get(path: path, id: "\(id)") { (results: Result<Player?, Error>) in
+            switch results {
+            case .failure( _):
+                completion(.failure(ConnectionError.requestError("Request Failed, See Connection.Info for details")))
+                break
+            case .success(let player):
+                completion(.success(player))
+                break
+            }
+        }
+    }
+    
     /*
     /// APITag.list() requires a connection, and takes option page and length parameters to request a list of
     ///   APITags from the API.

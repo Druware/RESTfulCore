@@ -10,7 +10,7 @@
 import Foundation
 
 
-enum ConnectionError: Error {
+public enum ConnectionError: Error {
     case requestError(String)
 }
 
@@ -373,10 +373,10 @@ public class Connection {
     
     // MARK: Post
     
-    public func post<T : RESTObject>(
+    public func post<T : RESTObject, U : RESTObject>(
         path: String,
         model: T,
-        completion: @escaping (Result<T?, Error>) -> Void) {
+        completion: @escaping (Result<U?, Error>) -> Void) {
 
             resetInfo()
         let urlString = buildUrlString(parts: path)
@@ -423,7 +423,7 @@ public class Connection {
                         return
                     }
 
-                    let result = T(with: json)
+                    let result = U(with: json)
                     // if the status is a failure call the failure instead
                     completion(.success(result))
                 } catch {
@@ -438,7 +438,7 @@ public class Connection {
         task.resume()
     }
     
-    public func post<T: RESTObject>(path: String, model: T) async throws -> T? {
+    public func post<T: RESTObject, U: RESTObject>(path: String, model: T) async throws -> U? {
         
         resetInfo()
         let urlString = buildUrlString(parts: path)
@@ -474,7 +474,7 @@ public class Connection {
                     return nil
                 }
 
-                let result = T(with: json)
+                let result = U(with: json)
                 // if the status is a failure call the failure instead
                 return result
             } catch {

@@ -63,7 +63,7 @@ final class RESTfulCoreTests: XCTestCase {
 
     }
     
-    func testGetPlayer() {
+    func testConnectionGet() {
         let expectation = XCTestExpectation(description: "testGetPlayer")
         
         let rootPath = "https://www.trustee13.com/";
@@ -88,7 +88,7 @@ final class RESTfulCoreTests: XCTestCase {
         wait(for: [expectation], timeout: 10.0)
     }
 
-    func testGetPlayerAsync() async throws {
+    func testConnectionGetAsync() async throws {
         let rootPath = "https://www.trustee13.com/";
         let path = "/unittest/api/Players/";
         let id = 1;
@@ -96,6 +96,46 @@ final class RESTfulCoreTests: XCTestCase {
         let connection = Connection(basePath: rootPath)
        
         let player : Player? = try await connection.get(path: path, id: "\(id)")
+        if (player == nil) {
+            print(connection.info!)
+        }
+        
+        XCTAssertNotNil(player, "Result is nil")
+        XCTAssertTrue(player?.playerId == 1, "PlayerId is not 1")
+        XCTAssertTrue(player?.playerName == "Mickey Mouse", "PlayerName is not 'Mickey Mouse'")
+    }
+    
+    func testPlayerGet() {
+        let expectation = XCTestExpectation(description: "testGetPlayer")
+        
+        let rootPath = "https://www.trustee13.com/"
+        let id = 1;
+
+        let connection = Connection(basePath: rootPath)
+        
+        Player.get(connection: connection, id: Int64(id)) { (results: Result<Player?, Error>) in
+            switch results {
+            case .failure(let error):
+                print(error.localizedDescription)
+                XCTFail("Nope")
+            case .success(let player):
+                XCTAssertNotNil(player, "Result is nil")
+                XCTAssertTrue(player?.playerId == 1, "PlayerId is not 1")
+                XCTAssertTrue(player?.playerName == "Mickey Mouse", "PlayerName is not 'Mickey Mouse'")
+            }
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 10.0)
+    }
+    
+    func testGetPlayerAsync() async throws {
+        let rootPath = "https://www.trustee13.com/"
+        let id = 1
+
+        let connection = Connection(basePath: rootPath)
+       
+        let player : Player? = try await Player.get(connection: connection, id: Int64(id))
         if (player == nil) {
             print(connection.info!)
         }
