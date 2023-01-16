@@ -233,9 +233,12 @@ public class Connection {
         task.resume()
     }
     
-    public func get<T: RESTObject>(path: String, id: String?) async throws -> T? {
+    public func get<T: RESTObject>(path: String, id: String? = nil, query: String? = nil) async throws -> T? {
         resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
+        var urlString = buildUrlString(parts: path, id ?? "")
+        if (query != nil) {
+            urlString += "?\(query!)"
+        }
         let url = URL(string: urlString)
         
         // TODO: add guard around potential nil url result
@@ -271,11 +274,15 @@ public class Connection {
     
     public func get<T : RESTObject>(
         path: String,
-        id: String?,
+        id: String? = nil,
+        query: String? = nil,
         completion: @escaping (Result<T?, Error>) -> Void)
     {
         resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
+        var urlString = buildUrlString(parts: path, id ?? "")
+        if (query != nil) {
+            urlString += "?\(query!)"
+        }
         let url = URL(string: urlString)
         
         let task = urlSession.dataTask(with: url!, completionHandler: { data, response, error in
@@ -836,6 +843,7 @@ public class Connection {
         
         return nil
     }
+    
     public func put<T: RESTObject>(path: String, id: String?, model: T) async throws -> Bool {
         resetInfo()
         let urlString = buildUrlString(parts: path, id ?? "")
