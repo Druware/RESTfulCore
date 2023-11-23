@@ -66,14 +66,16 @@ public class Connection {
     /// // resulting url = "http://localhost/api/controller/itemId"
     /// print(url)
     /// ```
-    public func buildUrlString(parts : String ...) -> String {
+    public func buildUrlString(parts : String ..., queryString: String? = nil) -> String {
         var result : String = rootPath + (rootPath.hasSuffix("/") ? "" : "/")
 
         for s : String in parts {
             result += (s.hasPrefix("/") ?
                        String(s[(s.index(after: s.firstIndex(of: "/")!))...]) : s)
-            result += (result.hasSuffix("/") ? "" : "/")
+            //result += (result.hasSuffix("/") ? "" : "/")
         }
+        
+        if (queryString != nil) { result += "?\(queryString!)" }
 
         return result;
     }
@@ -144,10 +146,15 @@ public class Connection {
         task.resume()
     }
     
-    public func list<T: RESTObject>(path: String) async throws -> [T]? {
+    /// request an array list from the server path, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    /// async versionyes.anything
+    /// - Parameter path:
+    /// - Returns: an array of RESTObjects as defined by the generic T
+    public func list<T: RESTObject>(path: String, page: Int32 = 0, perPage: Int32 = 50) async throws -> [T]? {
         resetInfo()
 
-        let urlString = buildUrlString(parts: path)
+        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
         let url = URL(string: urlString)
         if (url == nil) {
             setInfo("Failed to construct a valid URL")
