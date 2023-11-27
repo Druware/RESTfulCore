@@ -13,16 +13,24 @@
 //        202 (Accepted)
 //        204 (No Content)
 // TODO: Add associatd UnitTests and Server Test cases for each
+// TODO: I am not happy with the volume of duplicated code, so will consolidate
+//       some of this shortly
 
 
 import Foundation
-
 
 public enum ConnectionError: Error {
     case requestError(String)
 }
 
 public typealias ConnectionOperationFailure =  (String) -> Void
+
+internal enum RequestMethod : String {
+    case get = "GET"
+    case post = "POST"
+    case put = "PUT"
+    case delete = "DELETE"
+}
 
 /// The Connection object is the root of all server communication with the API,
 /// and as such, it implements both the primitive functions that the RESTObject
@@ -33,7 +41,7 @@ public class Connection {
     private var rootPath : String
     public var info : [String]? = nil
     private var urlSession : URLSession
-
+    
     /// The core initialiizer for a Connection, with the basePath being the
     /// hostPath ( including the [http/https]://hostname portion of the path )
     /// - Parameter basePath: <#basePath description#>
@@ -42,10 +50,13 @@ public class Connection {
         sessionConfig.httpCookieAcceptPolicy = .always
         sessionConfig.httpShouldSetCookies = true
         HTTPCookieStorage.shared.cookies(for: URL(string: basePath)!)
-
+        
         urlSession = URLSession(configuration: sessionConfig)
         self.rootPath = basePath
     }
+    
+    // MARK: Utility
+    // MARK: -
     
     /// Builds a URL from string parts, appended to the internal rootPath that
     /// was established upon creation of the Connection object.
@@ -68,15 +79,17 @@ public class Connection {
     /// ```
     public func buildUrlString(parts : String ..., queryString: String? = nil) -> String {
         var result : String = rootPath + (rootPath.hasSuffix("/") ? "" : "/")
-
+        
         for s : String in parts {
-            result += (s.hasPrefix("/") ?
-                       String(s[(s.index(after: s.firstIndex(of: "/")!))...]) : s)
-            //result += (result.hasSuffix("/") ? "" : "/")
+            if (s != "") {
+                result += (result.hasSuffix("/") ? "" : "/")
+                result += (s.hasPrefix("/") ? String(s[(s.index(after: s.firstIndex(of: "/")!))...]) : s)
+            }
         }
+        result += (result.hasSuffix("/") ? "" : "/")
         
         if (queryString != nil) { result += "?\(queryString!)" }
-
+        
         return result;
     }
     
@@ -89,6 +102,129 @@ public class Connection {
         if (info != nil) { info?.removeAll() }
     }
     
+    private func doRequestFor(url: String, method: RequestMethod = .get,
+                              model: RESTObject? = nil) async throws -> Data? {
+        resetInfo()
+        let _url = URL(string: url)
+        
+        if (_url == nil) {
+            throw ConnectionError.requestError("No Empty URL's allowed")
+        }
+        
+        var request : URLRequest = URLRequest(url: _url!)
+        
+        request.httpMethod = method.rawValue
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
+        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
+        
+        if (model != nil) {
+            let encoder : JSONEncoder = JSONEncoder()
+            do
+            {
+                let jsonData = try encoder.encode(model)
+                request.httpBody = jsonData
+            } catch {
+                self.setInfo("Failed, Unable to Encode the Model")
+                throw error
+            }
+        }
+        
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            
+            switch ((response as? HTTPURLResponse)?.statusCode) {
+            case 200: fallthrough // OK
+            case 201: // created
+                return data
+            case 202: fallthrough // accepted
+            case 204: // no content
+                self.setInfo("Succeeded, but no content was returned")
+                return nil
+            default:
+                self.setInfo("Failed, Status Code: \((response as? HTTPURLResponse)!.statusCode)")
+                return nil
+            }
+        } catch {
+            self.setInfo(error.localizedDescription)
+            throw error
+        }
+    }
+    
+    // MARK: List
+    // MARK: -
+    
+    // Async
+    
+    /// request an array list from the server path, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    /// async version
+    /// - Parameter path:
+    /// - Returns: an array of RESTObjects as defined by the generic T
+    public func list<T: RESTObject>(path: String,
+                                    page: Int32 = 0,
+                                    perPage: Int32 = 50) async throws -> [T]? {
+        // use the generic request
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
+        do {
+            data = try await doRequestFor(url: urlString, method: .get)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
+        }
+        
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [[String: Any]] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        var result : [T] = [T]()
+        // process the array
+        json.forEach { item in
+            let i = T(with: item)
+            result.append(i)
+        }
+        
+        return result
+    }
+    
+    /// request a list from the server path, where the resulting array is
+    /// a RESTfulObjectListof typed object based upon the RESTObject Base object.
+    /// async version
+    /// - Parameter path:
+    /// - Returns: a RESTfulObjectList of RESTObjects as defined by the generic T
+    public func list<T: RESTObject>(path: String, page: Int32 = 0, perPage: Int32 = 50) async throws -> RESTObjectList<T>? {
+        // use the generic request
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
+        do {
+            data = try await doRequestFor(url: urlString, method: .get)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
+        }
+        
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        let result = RESTObjectList<T>(with: json)
+        return result
+    }
+    
+    // Sync w/ closures
+    
     /// request an array list from the server path, where the resulting array is
     /// an array / list of typed object based upon the RESTObject Base object.
     ///
@@ -96,304 +232,181 @@ public class Connection {
     /// - parameter completion: a closure
     /// - returns: an array of RESTObjects as defined by the generic T
     public func list<T: RESTObject>(path: String,
+                                    page: Int32 = 0,
+                                    perPage: Int32 = 50,
                                     completion: @escaping (Result<[T]?, Error>) -> Void) {
-        resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        let task = urlSession.dataTask(with: url!, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(error!))
-                return
+        _ = Task { () -> Result<[T]?, Error> in
+            do {
+                let result : [T]? = try await self.list(path: path, page: page, perPage: perPage)
+                // call the completion closure
+                completion(Result.success(result))
+                return Result.success(result)
             }
-            if (data == nil) {
-                self.setInfo("Request Response is Empty: \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("Request Response is Empty: \(String(describing: data))")))
-                return
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
             }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("Request produced an invalid HTTP response: \(String(describing: response))")))
-                return
-            }
-            if (httpResponse.statusCode == 200) {
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [[String: Any]] else {
-                        self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        return
-                    }
-                    var result : [T] = [T]()
-                    // process the array
-                    json.forEach { item in
-                        let i = T(with: item)
-                        result.append(i)
-                    }
-                    
-                    return completion(.success(result))
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    return
-                }
-            } else {
-                self.setInfo("Error: \(httpResponse.statusCode) : \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-            }
-            return
-        })
-        task.resume()
+        }
     }
     
-    /// request an array list from the server path, where the resulting array is
-    /// an array / list of typed object based upon the RESTObject Base object.
-    /// async versionyes.anything
-    /// - Parameter path:
-    /// - Returns: an array of RESTObjects as defined by the generic T
-    public func list<T: RESTObject>(path: String, page: Int32 = 0, perPage: Int32 = 50) async throws -> [T]? {
-        resetInfo()
-
-        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
-        let url = URL(string: urlString)
-        if (url == nil) {
-            setInfo("Failed to construct a valid URL")
+    /// request an object list from the server path, where the resulting array
+    /// is an array / list of typed object based upon the RESTObject Base that
+    /// is wrapped in a RESTObjectList that includes paging information as well
+    /// as total record counts.
+    ///
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - page: 0 based page within the result set
+    ///   - perPage: number of records in the page
+    ///   - completion: the closure that will return the results of the request
+    ///         in the form a a Result that can include the successful result,
+    ///         or the error.
+    public func list<T: RESTObject>(path: String, page: Int32, perPage: Int32,
+                                    completion: @escaping (Result<RESTObjectList<T>?, Error>) -> Void) {
+        _ = Task { () -> Result<RESTObjectList<T>?, Error> in
+            do {
+                let result : RESTObjectList<T>? = try await self.list(path: path, page: page, perPage: perPage)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
+        }
+    }
+    
+    // MARK: Get
+    // MARK: -
+    
+    /// request an object from the server endpoint, where the resulting object
+    /// based upon the RESTObject base class
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - query: optional query string keys and values preassembled without
+    ///         the leading ?
+    /// - Returns: the typed object based upon RESTObject
+    public func get<T: RESTObject>(path: String, id: String? = nil, query: String? = nil) async throws -> T? {
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, id ?? "", queryString: query)
+        do {
+            data = try await doRequestFor(url: urlString, method: .get)
+        }
+        catch
+        {
+            setInfo("Error during request")
             return nil
         }
         
-        do {
-            let (data, response) = try await urlSession.data(from: url!)
-            
-            let code = (response as? HTTPURLResponse)?.statusCode
-            if (code != 200) {
-                setInfo("Server Responded with a non-200 Status Code \(code ?? 0)")
-                return nil
-            }
-            
-            do {
-                guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] else {
-                    setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                    return nil
-                }
-                var result : [T] = [T]()
-                // process the array
-                json.forEach { item in
-                    let i = T(with: item)
-                    result.append(i)
-                }
-                
-                return result
-            } catch {
-                setInfo("Error: Unable to parse the result")
-                return nil
-            }
-            
-        } catch {
-            print(error)
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
         }
-        
-        return nil
-    }
-       
-    public func list<T: RESTObject>(path: String, page: Int32, perPage: Int32,
-                                    completion: @escaping (Result<RESTObjectList<T>?, Error>) -> Void) {
-        resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        let task = urlSession.dataTask(with: url!, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(error!))
-                return
-            }
-            if (data == nil) {
-                self.setInfo("Request Response is Empty: \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("Request Response is Empty: \(String(describing: data))")))
-                return
-            }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("Request produced an invalid HTTP response: \(String(describing: response))")))
-                return
-            }
-            if (httpResponse.statusCode == 200) {
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
-                        self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        return
-                    }
-                    let result = RESTObjectList<T>(with: json)
-                    completion(.success(result))
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    return
-                }
-            } else {
-                self.setInfo("Error: \(httpResponse.statusCode) : \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-            }
-            return
-        })
-        task.resume()
+        let result = T(with: json)
+        return result
     }
     
-    public func get<T: RESTObject>(path: String, id: String? = nil, query: String? = nil) async throws -> T? {
-        resetInfo()
-        var urlString = buildUrlString(parts: path, id ?? "")
-        if (query != nil) {
-            urlString += "?\(query!)"
-        }
-        let url = URL(string: urlString)
-        
-        // TODO: add guard around potential nil url result
-        
-        do {
-            let (data, response) = try await urlSession.data(from: url!)
-            
-            if ((response as? HTTPURLResponse)?.statusCode != 200) {
-                setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return nil
-            }
-            
-            do {
-                guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-                    setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                    return nil
-                }
-
-                let result = T(with: json)
-                // if the status is a failure call the failure instead
-                return result
-            } catch {
-                setInfo("Error: Unable to parse the result")
-                return nil
-            }
-            
-        } catch {
-            print(error)
-        }
-        
-        return nil
-    }
-    
+    /// request an object from the server endpoint, where the resulting object
+    /// based upon the RESTObject base class, wrapping the async call in a sync
+    /// wrapper
+    ///     /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - query: optional query string keys and values preassembled without
+    ///         the leading ?
+    ///   - completion: a closure that enables the return of the data from the
+    ///         sync method.
     public func get<T : RESTObject>(
         path: String,
         id: String? = nil,
         query: String? = nil,
         completion: @escaping (Result<T?, Error>) -> Void)
     {
-        resetInfo()
-        var urlString = buildUrlString(parts: path, id ?? "")
-        if (query != nil) {
-            urlString += "?\(query!)"
+        _ = Task { () -> Result<T?, Error> in
+            do {
+                let result : T? = try await self.get(path: path, id: id, query: query)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
         }
-        let url = URL(string: urlString)
-        
-        let task = urlSession.dataTask(with: url!, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(error!))
-                return
-            }
-            guard let responseData = data else {
-                self.setInfo("Request Response is Empty: \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("Request Response is Empty: \(String(describing: data))")))
-                return
-            }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("Request produced an invalid HTTP response: \(String(describing: response))")))
-                return
-            }
-            if (httpResponse.statusCode == 200) {
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: responseData, options: []) as? [String: Any] else {
-                        self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        completion(.failure(ConnectionError.requestError("See Info for more details")))
-                        return
-                    }
-
-                    let result = T(with: json)
-                    // if the status is a failure call the failure instead
-                    return completion(.success(result))
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    return
-                }
-            } else {
-                self.setInfo("Error: \(httpResponse.statusCode) : \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-            }
-            return
-        })
-        task.resume()
     }
-    
-    // MARK: Query
-    
-    /*
-    
-    public func query<T : RESTObject, U : RESTObject>(path: String,
-                                                            query: U,
-                                                            completion: @escaping (RESTObjectList<T>?) -> Void,
-                                                            failure: @escaping (String) -> Void) {
-        let full: String = "\(self.base)/\(path)"
-        let url = URL(string: full)!
-        
-        var request : URLRequest = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        // build the jsonData from the model
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(query)
-            request.httpBody = jsonData
-        } catch {
-            failure("Encoding Failed the Operation")
-            return
-        }
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                failure("Request Encountered an error: \(String(describing: error))")
-                return
-            }
-            guard let responseData = data else {
-                failure("Request Response is Empty: \(String(describing: data))")
-                return
-            }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                failure("Request produced an invalid HTTP response: \(String(describing: response))")
-                return
-            }
-            if (httpResponse.statusCode == 200) {
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: responseData, options: []) as? [String: Any] else {
-                        failure("Request produced an invalid HTTP response: \(String(describing: response))")
-                        return
-                    }
-
-                    let result = RESTObjectList<T>(with: json)
-                    completion(result)
-                } catch {
-                    failure("Error: Unable to parse the result")
-                }
-            } else {
-                failure("Error: \(httpResponse.statusCode) : \(String(describing: data))")
-            }
-        })
-        task.resume()
-    }
-    */
     
     // MARK: Post
+    // MARK: -
+    
+    /// post() submits a post request to a server, json encoding the model
+    ///   passed in in the parameter list.
+    ///
+    ///   #NOTES#
+    ///   Pay attention to the result type requested, as the result may return
+    ///   as eitehr a bool, or an object, and if a bool is requested and the
+    ///   call results in a data stream, that data stream will be discarded.
+    ///
+    /// - Parameters:
+    ///   - connection: A Connection instance, usually a shared instance
+    ///   - model: A model that inherits from the RESTObject base type
+    /// - Returns:
+    ///   - RESTObject, assuming a result code of 200, and in any other case a
+    ///     nil value, with the connection.info array containing the details of
+    ///     the action
+    public func post<T: RESTObject, U: RESTObject>(path: String, model: T) async throws -> U? {
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path)
+        do {
+            data = try await doRequestFor(url: urlString, method: .post, model: model)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
+        }
+        
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        let result = U(with: json)
+        return result
+    }
+    
+    /// post() submits a post request to a server, json encoding the model
+    ///   passed in in the parameter list.
+    ///
+    ///   #NOTES#
+    ///   Pay attention to the result type requested, as the result may return
+    ///   as either a bool, or an object, and if a bool is requested and the
+    ///   call results in a data stream, that data stream will be discarded.
+    ///
+    /// - Parameters:
+    ///   - connection: A Connection instance, usually a shared instance
+    ///   - model: A model that inherits from the RESTObject base type
+    /// - Returns:
+    ///   - bool, assuming a result code of 200-204
+    public func post<T: RESTObject>(path: String, model: T) async throws -> Bool {
+        let urlString = buildUrlString(parts: path)
+        do {
+            let _ : Data? = try await doRequestFor(url: urlString, method: .post, model: model)
+            return true
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return false
+        }
+    }
     
     /// post() submits a post request to a server, json encoding the model
     ///   passed in in the parameter list.
@@ -417,67 +430,17 @@ public class Connection {
         path: String,
         model: T,
         completion: @escaping (Result<U?, Error>) -> Void) {
-
-            resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        // build the jsonData from the model
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            completion(.failure(ConnectionError.requestError("See Info for more details")))
-            return
+        _ = Task { () -> Result<U?, Error> in
+            do {
+                let result : U? = try await self.post(path: path, model: model)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
         }
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough // OK
-            case 201: // created
-                do {
-                    if (data == nil) {
-                        completion(.success(nil))
-                        return
-                    }
-                    guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
-                        self.setInfo("Failed, Invalid HTTP response: \(String(describing: response))")
-                        completion(.failure(ConnectionError.requestError("See Info for more details")))
-                        return
-                    }
-
-                    let result = U(with: json)
-                    completion(.success(result))
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                }
-            case 202: fallthrough // accepted
-            case 204: // no content
-                self.setInfo("Succeeded, but no object was returned")
-                completion(.success(nil))
-                return
-            default:
-                self.setInfo("Failed, Status Code: \((response as? HTTPURLResponse)!.statusCode)")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-        })
-        task.resume()
     }
     
     /// post() submits a post request to a server, json encoding the model
@@ -502,551 +465,366 @@ public class Connection {
         path: String,
         model: T,
         completion: @escaping (Result<Bool, Error>) -> Void) {
-
-            resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        // build the jsonData from the model
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            completion(.failure(ConnectionError.requestError("See Info for more details")))
-            return
-        }
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
+        _ = Task { () -> Result<Bool, Error> in
+            do {
+                let _ : Bool = try await self.post(path: path, model: model)
+                completion(Result.success(true))
+                return Result.success(true)
             }
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough // OK
-            case 201: fallthrough // created
-            case 202: fallthrough // accepted
-            case 204: // no content
-                completion(.success(true))
-                return
-            default:
-                self.setInfo("Failed, Status Code: \((response as? HTTPURLResponse)!.statusCode)")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
             }
-        })
-        task.resume()
-    }
-    
-    /// post() submits a post request to a server, json encoding the model
-    ///   passed in in the parameter list.
-    ///
-    ///   #NOTES#
-    ///   Pay attention to the result type requested, as the result may return
-    ///   as eitehr a bool, or an object, and if a bool is requested and the
-    ///   call results in a data stream, that data stream will be discarded.
-    ///
-    /// - Parameters:
-    ///   - connection: A Connection instance, usually a shared instance
-    ///   - model: A model that inherits from the RESTObject base type
-    /// - Returns:
-    ///   - RESTObject, assuming a result code of 200, and in any other case a
-    ///     nil value, with the connection.info array containing the details of
-    ///     the action
-    public func post<T: RESTObject, U: RESTObject>(path: String, model: T) async throws -> U? {
-        resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        // build thre request object
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Failed, Unable to Encode the Model")
-            return nil
         }
-        
-        do {
-            let (data, response) = try await urlSession.data(for: request)
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough // OK
-            case 201: // created
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-                        setInfo("Failed, Invalid HTTP response: \(String(describing: response))")
-                        return nil
-                    }
-                    return U(with: json)
-                } catch {
-                    setInfo("Succeeded, but unable to parse the result")
-                    return nil
-                }
-            case 202: fallthrough // accepted
-            case 204: // no content
-                self.setInfo("Succeeded, but no object was returned")
-                return nil
-            default:
-                self.setInfo("Failed, Status Code: \((response as? HTTPURLResponse)!.statusCode)")
-                return nil
-            }
-        } catch {
-            self.setInfo(error.localizedDescription)
-        }
-        
-        return nil
-    }
-    
-    /// post() submits a post request to a server, json encoding the model
-    ///   passed in in the parameter list.
-    ///
-    ///   #NOTES#
-    ///   Pay attention to the result type requested, as the result may return
-    ///   as either a bool, or an object, and if a bool is requested and the
-    ///   call results in a data stream, that data stream will be discarded.
-    ///
-    /// - Parameters:
-    ///   - connection: A Connection instance, usually a shared instance
-    ///   - model: A model that inherits from the RESTObject base type
-    /// - Returns:
-    ///   - bool, assuming a result code of 200-204
-    public func post<T: RESTObject>(path: String, model: T) async throws -> Bool {
-        resetInfo()
-        let urlString = buildUrlString(parts: path)
-        let url = URL(string: urlString)
-        
-        // build thre request object
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            return false
-        }
-        
-        do {
-            let (_, response) = try await urlSession.data(for: request)
-
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201: fallthrough
-            case 202: fallthrough
-            case 204:
-                return true
-            default:
-                self.setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return false
-            }
-        } catch {
-            self.setInfo("Request encountered an unexpected error \(error.localizedDescription)")
-        }
-        return false
     }
     
     // MARK: Put
+    // MARK: -
+        
+    /// performs a put ( update ) of the model to the endpint appended with the
+    /// id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - model: A model that inherits from the RESTObject base type
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a RESTObject derived object as returned from the server.
+    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T) async throws -> U? {
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, id ?? "")
+        do {
+            data = try await doRequestFor(url: urlString, method: .put, model: model)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
+        }
+        
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        let result = U(with: json)
+        return result
+    }
     
+    /// performs a put ( update ) of the model to the endpint appended with the
+    /// id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - model: A model that inherits from the RESTObject base type
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a bool as success or failure
+    public func put<T: RESTObject>(path: String, id: String?, model: T) async throws -> Bool {
+        let urlString = buildUrlString(parts: path, id ?? "")
+        do {
+            _ = try await doRequestFor(url: urlString, method: .put, model: model)
+            return true
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return false
+        }
+    }
+    
+    /// performs a put ( update ) of the model to the endpint appended with the
+    /// id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - model: A model that inherits from the RESTObject base type
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a RESTfulObject as defined by the server endpoint
     public func put<T : RESTObject, U : RESTObject>(
         path: String,
         id: String?,
         model: T,
         completion: @escaping (Result<U?, Error>) -> Void) {
-
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        // build the jsonData from the model
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            completion(.failure(ConnectionError.requestError("See Info for more details")))
-            return
+        _ = Task { () -> Result<U?, Error> in
+            do {
+                let result : U? = try await self.put(path: path, id: id, model: model)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
         }
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            guard let responseData = data else {
-                self.setInfo("Request Response is Empty: \(String(describing: data))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            // 200 == success
-            // 201 == success with body
-            // 202 == success no body
-            // 204 == success no body
-            if (httpResponse.statusCode == 200 || httpResponse.statusCode == 201) {
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: responseData, options: []) as? [String: Any] else {
-                        self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        completion(.failure(ConnectionError.requestError("See Info for more details")))
-                        return
-                    }
-
-                    let result = U(with: json)
-                    // if the status is a failure call the failure instead
-                    completion(.success(result))
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                }
-            } else if (httpResponse.statusCode == 202 || httpResponse.statusCode == 204) {
-                self.setInfo("Succeeded, but no object was returned")
-                completion(.success(nil))
-            } else {
-                self.setInfo("Error: \(httpResponse.statusCode) : \(data == nil ? "" : String(decoding:data!, as: UTF8.self))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-            }
-        })
-        task.resume()
     }
     
+    /// performs a put ( update ) of the model to the endpint appended with the
+    /// id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - model: A model that inherits from the RESTObject base type
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a bool as success or failure
     public func put<T : RESTObject>(
         path: String,
         id: String?,
         model: T,
         completion: @escaping (Result<Bool, Error>) -> Void) {
-
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        // build the jsonData from the model
-        let encoder : JSONEncoder = JSONEncoder()
-        do
-        {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            completion(.failure(ConnectionError.requestError("See Info for more details")))
-            return
+        _ = Task { () -> Result<Bool, Error> in
+            do {
+                let _ : Bool = try await self.put(path: path, id: id, model: model)
+                completion(Result.success(true))
+                return Result.success(true)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
         }
+    }
 
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
+    // MARK: Delete
+    // MARK: -
+    
+    /// performs a delete on the endpint appended with the id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a bool as success or failure
+    public func delete(path: String, id: String, completion: @escaping (Result<Bool, Error>) -> Void) {
+        _ = Task { () -> Result<Bool, Error> in
+            do {
+                let _ : Bool = try await self.delete(path: path, id: id)
+                completion(Result.success(true))
+                return Result.success(true)
             }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
             }
-            // 200 == success
-            // 201 == success with body
-            // 204 == success no body
-            if (httpResponse.statusCode == 200 || httpResponse.statusCode == 201 ||
-                httpResponse.statusCode == 202 || httpResponse.statusCode == 204) {
-                self.setInfo("Succeeded, but no object was returned")
-                completion(.success(true))
-            } else {
-                self.setInfo("Error: \(httpResponse.statusCode) : \(data == nil ? "" : String(decoding:data!, as: UTF8.self))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-            }
-        })
-        task.resume()
+        }
     }
     
-    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T) async throws -> U? {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
+    /// performs a delete on the endpint appended with the id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    ///   - completion: A closure to be called upon completion with either a
+    ///     success or failure as the payload. Any additional information is
+    ///     contained in the connection.info property
+    /// - Returns: a RESTfulObject as success and or the failure condition in
+    ///     the Result
+    public func delete<T: RESTObject>(path: String, id: String, completion: @escaping (Result<T?, Error>) -> Void) {
+        _ = Task { () -> Result<T?, Error> in
+            do {
+                let result : T? = try await self.delete(path: path, id: id)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
+        }
+    }
         
-        // build thre request object
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let encoder : JSONEncoder = JSONEncoder()
-        do
+    /// performs a delete on the endpint appended with the id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    /// - Returns: a bool as success or failure
+    public func delete(path: String, id: String?) async throws -> Bool {
+        let urlString = buildUrlString(parts: path, id ?? "")
+        do {
+            _ = try await doRequestFor(url: urlString, method: .delete)
+            return true
+        }
+        catch
         {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
+            setInfo("Error during request")
+            return false
+        }
+    }
+    
+    /// performs a delete on the endpint appended with the id to the path.
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - id: optional id for a specific record
+    /// - Returns: a bool as success or failure
+    public func delete<T: RESTObject>(path: String, id: String?) async throws -> T? {
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, id ?? "")
+        do {
+            data = try await doRequestFor(url: urlString, method: .delete)
+        }
+        catch
+        {
+            setInfo("Error during request")
             return nil
         }
         
-        do {
-            let (data, response) = try await urlSession.data(for: request)
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201:
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-                        setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        return nil
-                    }
-
-                    let result = U(with: json)
-                    // if the status is a failure call the failure instead
-                    return result
-                } catch {
-                    setInfo("Error: Unable to parse the result")
-                    return nil
-                }
-            case 202: fallthrough
-            case 204:
-                self.setInfo("Succeeded, but no object was returned")
-                return nil
-            default:
-                setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return nil
-            }
-        } catch {
-            print(error)
-            setInfo(error.localizedDescription)
-        }
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
         
-        return nil
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        let result = T(with: json)
+        return result
     }
     
-    public func put<T: RESTObject>(path: String, id: String?, model: T) async throws -> Bool {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
-        
-        // build thre request object
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let encoder : JSONEncoder = JSONEncoder()
-        do
+    // MARK: Query
+    // MARK: -
+    
+    /// request an array list from the server path using a posted model to
+    /// establish the filter patterns, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    /// async version
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - model: required search criteria
+    ///   - page: the page within the result set
+    ///   - perPage: the number of items perPage in the result set.
+    /// - Returns: an array of RESTObjects as defined by the generic T
+    public func query<T: RESTObject>(path: String,
+                                    model: T,
+                                    page: Int32 = 0,
+                                    perPage: Int32 = 50) async throws -> [T]? {
+        // use the generic request
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
+        do {
+            data = try await doRequestFor(url: urlString, method: .post, model: model)
+        }
+        catch
         {
-            let jsonData = try encoder.encode(model)
-            request.httpBody = jsonData
-        } catch {
-            self.setInfo("Encoding Failed before the post operation")
-            return false
+            setInfo("Error during request")
+            return nil
         }
         
-        do {
-            let (_, response) = try await urlSession.data(for: request)
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201: fallthrough
-            case 202: fallthrough
-            case 204:
-                return true
-            default:
-                setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return false
-            }
-        } catch {
-            setInfo(error.localizedDescription)
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [[String: Any]] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        var result : [T] = [T]()
+        // process the array
+        json.forEach { item in
+            let i = T(with: item)
+            result.append(i)
         }
         
-        return false
+        return result
     }
     
-    public func delete(path: String, id: String, completion: @escaping (Result<Bool, Error>) -> Void) {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id)
-        let url = URL(string: urlString)
-
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "DELETE"
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            guard let _ = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201: fallthrough
-            case 204:
-                completion(.success(true))
-                return
-            default:
-                self.setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-        })
-        task.resume()
-    }
-    
-    public func delete<T: RESTObject>(path: String, id: String, completion: @escaping (Result<T?, Error>) -> Void) {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id)
-        let url = URL(string: urlString)
-
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "DELETE"
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-
-        let task = urlSession.dataTask(with: request, completionHandler: { data, response, error in
-            guard error == nil else {
-                self.setInfo("Request Encountered an error: \(String(describing: error))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            guard let _ = response as? HTTPURLResponse else {
-                self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201:
-                do {
-                    if (data != nil) {
-                        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
-                            self.setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                            completion(.failure(ConnectionError.requestError("See Info for more details")))
-                            return
-                        }
-                        completion(.success(T(with: json)))
-                        return
-                    } else {
-                        completion(.success(T()))
-                        return
-                    }
-                } catch {
-                    self.setInfo("Error: Unable to parse the result")
-                    completion(.failure(ConnectionError.requestError("See Info for more details")))
-                    return
-                }
-            case 204:
-                completion(.success(T()))
-                return
-            default:
-                self.setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                completion(.failure(ConnectionError.requestError("See Info for more details")))
-                return
-            }
-        })
-        task.resume()
-    }
-        
-    public func delete(path: String, id: String?) async throws -> Bool {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "DELETE"
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
+    /// request a list from the server path, where the resulting array is
+    /// a RESTfulObjectListof typed object based upon the RESTObject Base object.
+    /// async version
+    /// - Parameter path:
+    /// - Returns: a RESTfulObjectList of RESTObjects as defined by the generic T
+    public func query<T: RESTObject>(path: String,
+                                     model: T,
+                                     page: Int32 = 0,
+                                     perPage: Int32 = 50) async throws -> RESTObjectList<T>? {
+        // use the generic request
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path, queryString: "page=\(page)&count=\(perPage)")
         do {
-            let (_, response) = try await urlSession.data(for: request)
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201: fallthrough
-            case 204:
-                return true
-            default:
-                setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return false
-            }
-        } catch {
-            print(error)
-            setInfo(error.localizedDescription)
+            data = try await doRequestFor(url: urlString, method: .post, model: model)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
         }
         
-        return false
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [String: Any] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        let result = RESTObjectList<T>(with: json)
+        return result
     }
     
-    public func delete<T: RESTObject>(path: String, id: String?) async throws -> T? {
-        resetInfo()
-        let urlString = buildUrlString(parts: path, id ?? "")
-        let url = URL(string: urlString)
-        
-        var request : URLRequest = URLRequest(url: url!)
-        request.httpMethod = "DELETE"
-        request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
-        
-        do {
-            let (data, response) = try await urlSession.data(for: request)
-            
-            switch ((response as? HTTPURLResponse)?.statusCode) {
-            case 200: fallthrough
-            case 201:
-                do {
-                    guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-                        setInfo("Request produced an invalid HTTP response: \(String(describing: response))")
-                        return nil
-                    }
-                    
-                    return T(with: json)
-                } catch {
-                    setInfo("Error: Unable to parse the result")
-                    return nil
-                }
-            case 204:
-                return T()
-            default:
-                setInfo("Server Responded with a non-200 Status Code \((response as? HTTPURLResponse)!.statusCode)")
-                return nil
+    // Sync w/ closures
+    
+    /// request an array list from the server path, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    ///
+    /// - parameter path:
+    /// - parameter completion: a closure
+    /// - returns: an array of RESTObjects as defined by the generic T
+    public func query<T: RESTObject>(path: String,
+                                    model: T,
+                                    page: Int32 = 0,
+                                    perPage: Int32 = 50,
+                                    completion: @escaping (Result<[T]?, Error>) -> Void) {
+        _ = Task { () -> Result<[T]?, Error> in
+            do {
+                let result : [T]? = try await self.query(path: path, model: model, page: page, perPage: perPage)
+                // call the completion closure
+                completion(Result.success(result))
+                return Result.success(result)
             }
-        } catch {
-            print(error)
-            setInfo(error.localizedDescription)
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
         }
-        
-        return nil
     }
+    
+    /// request an object list from the server path, where the resulting array
+    /// is an array / list of typed object based upon the RESTObject Base that
+    /// is wrapped in a RESTObjectList that includes paging information as well
+    /// as total record counts.
+    ///
+    /// - Parameters:
+    ///   - path: path to the endpoint
+    ///   - page: 0 based page within the result set
+    ///   - perPage: number of records in the page
+    ///   - completion: the closure that will return the results of the request
+    ///         in the form a a Result that can include the successful result,
+    ///         or the error.
+    public func query<T: RESTObject>(path: String,
+                                     model: T,
+                                     page: Int32,
+                                     perPage: Int32,
+                                     completion: @escaping (Result<RESTObjectList<T>?, Error>) -> Void) {
+        _ = Task { () -> Result<RESTObjectList<T>?, Error> in
+            do {
+                let result : RESTObjectList<T>? = try await self.query(path: path, model: model, page: page, perPage: perPage)
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
+        }
+    }
+
 }
+    

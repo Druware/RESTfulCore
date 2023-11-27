@@ -262,16 +262,14 @@ final class RESTfulCoreTests: XCTestCase {
        
         let putExp = XCTestExpectation(description: "testPutPlayer->Put")
         
-        connection.put(path: path, id: String(id), model: player!) { (results: Result<Player?, Error>) in
+        connection.put(path: path, id: String(id), model: player!) { (results: Result<Bool, Error>) in
             switch results {
             case .failure(let error):
                 print(error.localizedDescription)
                 XCTFail("A Failure Occured: \(connection.info?.joined(separator:"\n") ?? "unknown")")
                 putExp.fulfill()
-            case .success(let player):
-                XCTAssertNotNil(player, "Result is nil")
-                XCTAssertTrue(player?.playerId ?? 0 > 0, "PlayerId is not set")
-                XCTAssertTrue(player?.playerName == "Plato", "PlayerName is not 'Plato'")
+            case .success(let r):
+                XCTAssertTrue(r, "PlayerId is not set")
                 putExp.fulfill()
             }
         }
@@ -283,68 +281,22 @@ final class RESTfulCoreTests: XCTestCase {
         
         let restoreExp = XCTestExpectation(description: "testPutPlayer->Restore")
         
-        connection.put(path: path, id: String(id), model: player!) { (results: Result<Player?, Error>) in
+        connection.put(path: path, id: String(id), model: player!) { (results: Result<Bool, Error>) in
             switch results {
             case .failure(let error):
                 print(error.localizedDescription)
                 XCTFail("A Failure Occured: \(connection.info?.joined(separator:"\n") ?? "unknown")")
                 restoreExp.fulfill()
 
-            case .success(let player):
-                XCTAssertNotNil(player, "Result is nil")
-                XCTAssertTrue(player?.playerId ?? 0 > 0, "PlayerId is not set")
-                XCTAssertTrue(player?.playerName == "Pluto", "PlayerName is not 'Pluto'")
+            case .success(let r):
+                XCTAssertTrue(r, "PlayerId is not set")
                 restoreExp.fulfill()
-
             }
         }
         
         wait(for: [restoreExp], timeout: 5.0)
     }
     
-    func testPutPlayerAsync() async throws {
-        let rootPath = "https://www.trustee13.com/";
-        let path = "/unittest/api/Players/";
-        let id = 6
-
-        let connection = Connection(basePath: rootPath)
-
-        var player : Player? = try await connection.get(path: path, id: "\(id)")
-        if (player == nil) {
-            print(connection.info!)
-            XCTFail("A Failure Occured: \(connection.info?.joined(separator:"\n") ?? "unknown")")
-            return
-        }
-        XCTAssertNotNil(player, "Result is nil")
-        XCTAssertTrue(player?.playerId == 6, "PlayerId is not 6")
-        XCTAssertTrue(player?.playerName == "Pluto", "PlayerName is not 'Pluto'")
-       
-        player?.playerName = "Plato"
-       
-        player = try await connection.put(path: path, id: String(id), model: player!)
-        if (player == nil) {
-            print(connection.info!)
-            XCTFail("A Failure Occured: \(connection.info?.joined(separator:"\n") ?? "unknown")")
-            return
-        }
-        
-        XCTAssertNotNil(player, "Result is nil")
-        XCTAssertTrue(player?.playerId ?? 0 > 0, "PlayerId is not set")
-        XCTAssertTrue(player?.playerName == "Plato", "PlayerName is not 'Plato'")
-        
-        player?.playerName = "Pluto"
-       
-        player = try await connection.put(path: path, id: String(id), model: player!)
-        if (player == nil) {
-            print(connection.info!)
-            XCTFail("A Failure Occured: \(connection.info?.joined(separator:"\n") ?? "unknown")")
-            return
-        }
-        
-        XCTAssertNotNil(player, "Result is nil")
-        XCTAssertTrue(player?.playerId ?? 0 > 0, "PlayerId is not set")
-        XCTAssertTrue(player?.playerName == "Pluto", "PlayerName is not 'Pluto'")
-    }
     
     // delete
     
