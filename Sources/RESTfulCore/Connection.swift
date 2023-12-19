@@ -193,6 +193,44 @@ public class Connection {
         return result
     }
     
+    /// request an array list from the server path, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    /// async version
+    /// - Parameter path:
+    /// - Returns: an array of RESTObjects as defined by the generic T
+    public func list<T: Any>(path: String) async throws -> [T]? {
+        
+        // use the generic request
+        var data : Data? = nil
+        let urlString = buildUrlString(parts: path)
+        do {
+            data = try await doRequestFor(url: urlString, method: .get)
+        }
+        catch
+        {
+            setInfo("Error during request")
+            return nil
+        }
+        
+        // if we get here, and have data, parse it, however a no data response
+        // is valid, so in that case return nil without an error ( there should
+        if (data == nil) { return nil }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data!, options: []) as? [[String: Any]] else {
+            setInfo("Response cannot be parsed into the expected object")
+            return nil
+        }
+        var result : [T] = [T]()
+        // process the array
+        json.forEach { item in
+            // let i = T(with: item)
+            result.append(item as! T)
+        }
+        
+        return result
+    }
+    
+
     /// request a list from the server path, where the resulting array is
     /// a RESTfulObjectListof typed object based upon the RESTObject Base object.
     /// async version
@@ -238,6 +276,30 @@ public class Connection {
         _ = Task { () -> Result<[T]?, Error> in
             do {
                 let result : [T]? = try await self.list(path: path, page: page, perPage: perPage)
+                // call the completion closure
+                completion(Result.success(result))
+                return Result.success(result)
+            }
+            catch{
+                completion(Result.failure(error))
+                return Result.failure(error)
+            }
+        }
+    }
+    
+    /// request an array list from the server path, where the resulting array is
+    /// an array / list of typed object based upon the RESTObject Base object.
+    ///
+    /// - parameter path:
+    /// - parameter completion: a closure
+    /// - returns: an array of any as defined by the generic T
+    public func list<T: Any>(path: String,
+                                    page: Int32 = 0,
+                                    perPage: Int32 = 50,
+                                    completion: @escaping (Result<[T]?, Error>) -> Void) {
+        _ = Task { () -> Result<[T]?, Error> in
+            do {
+                let result : [T]? = try await self.list(path: path)
                 // call the completion closure
                 completion(Result.success(result))
                 return Result.success(result)
