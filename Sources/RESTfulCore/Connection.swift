@@ -30,6 +30,15 @@ internal enum RequestMethod : String {
     case post = "POST"
     case put = "PUT"
     case delete = "DELETE"
+    case head = "HEAD"
+}
+
+internal enum ContentType : String {
+    case json = "application/json"
+    case multiPart = "multipart/form-data"
+    // formURLEncoded
+    // text
+    // xml
 }
 
 /// The Connection object is the root of all server communication with the API,
@@ -39,9 +48,27 @@ internal enum RequestMethod : String {
 public class Connection {
     
     private var rootPath : String
-    public var info : [String]? = nil
     private var urlSession : URLSession
     
+    public var info : [String]? = nil
+    public var hostStatus : Bool {
+        get {
+            let urlString = rootPath
+            Task {
+                do {
+                    _ = try await doRequestFor(url: urlString, method: .head)
+                    return true
+                }
+                catch
+                {
+                    setInfo("Error during request")
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     /// The core initialiizer for a Connection, with the basePath being the
     /// hostPath ( including the [http/https]://hostname portion of the path )
     /// - Parameter basePath: <#basePath description#>
@@ -99,11 +126,16 @@ public class Connection {
     }
     
     private func resetInfo() {
-        if (info != nil) { info?.removeAll() }
+        if (info != nil && info?.count ?? 0 > 0) {
+            info?.removeAll()
+            info = nil
+        }
     }
     
-    private func doRequestFor(url: String, method: RequestMethod = .get,
-                              model: RESTObject? = nil) async throws -> Data? {
+    private func doRequestFor(url: String, 
+                              method: RequestMethod = .get,
+                              model: RESTObject? = nil,
+                              contentType: ContentType = .json) async throws -> Data? {
         resetInfo()
         let _url = URL(string: url)
         
@@ -114,18 +146,30 @@ public class Connection {
         var request : URLRequest = URLRequest(url: _url!)
         
         request.httpMethod = method.rawValue
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
         request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
         
+        // if this is a multiPart, instead of using the JSONEncoder, use
+        // a MultipartEncoding ( if it is supported by the object, otherwise,
+        // throw an error )
         if (model != nil) {
-            let encoder : JSONEncoder = JSONEncoder()
-            do
-            {
-                let jsonData = try encoder.encode(model)
-                request.httpBody = jsonData
-            } catch {
-                self.setInfo("Failed, Unable to Encode the Model")
-                throw error
+            if (contentType == .multiPart) {
+                if let mp = model as? MultipartForm {
+                    let mpr = mp.multipartRequest()
+                    request.setValue(mpr?.header, forHTTPHeaderField: "Content-Type")
+                    request.httpBody = mpr?.body
+                }
+            } else {
+                // JSON
+                let encoder : JSONEncoder = JSONEncoder()
+                do
+                {
+                    let jsonData = try encoder.encode(model)
+                    request.setValue(contentType.rawValue, forHTTPHeaderField: "Content-Type") // the request is JSON
+                    request.httpBody = jsonData
+                } catch {
+                    self.setInfo("Failed, Unable to Encode the Model")
+                    throw error
+                }
             }
         }
         
