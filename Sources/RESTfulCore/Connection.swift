@@ -33,7 +33,7 @@ internal enum RequestMethod : String {
     case head = "HEAD"
 }
 
-internal enum ContentType : String {
+public enum ContentType : String {
     case json = "application/json"
     case multiPart = "multipart/form-data"
     // formURLEncoded
@@ -464,11 +464,11 @@ public class Connection {
     ///   - RESTObject, assuming a result code of 200, and in any other case a
     ///     nil value, with the connection.info array containing the details of
     ///     the action
-    public func post<T: RESTObject, U: RESTObject>(path: String, model: T) async throws -> U? {
+    public func post<T: RESTObject, U: RESTObject>(path: String, model: T, type: ContentType = .json) async throws -> U? {
         var data : Data? = nil
         let urlString = buildUrlString(parts: path)
         do {
-            data = try await doRequestFor(url: urlString, method: .post, model: model)
+            data = try await doRequestFor(url: urlString, method: .post, model: model, contentType: type)
         }
         catch
         {
@@ -501,10 +501,10 @@ public class Connection {
     ///   - model: A model that inherits from the RESTObject base type
     /// - Returns:
     ///   - bool, assuming a result code of 200-204
-    public func post<T: RESTObject>(path: String, model: T) async throws -> Bool {
+    public func post<T: RESTObject>(path: String, model: T, type: ContentType = .json) async throws -> Bool {
         let urlString = buildUrlString(parts: path)
         do {
-            let _ : Data? = try await doRequestFor(url: urlString, method: .post, model: model)
+            let _ : Data? = try await doRequestFor(url: urlString, method: .post, model: model, contentType: type)
             return true
         }
         catch
@@ -535,10 +535,11 @@ public class Connection {
     public func post<T : RESTObject, U : RESTObject>(
         path: String,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<U?, Error>) -> Void) {
         _ = Task { () -> Result<U?, Error> in
             do {
-                let result : U? = try await self.post(path: path, model: model)
+                let result : U? = try await self.post(path: path, model: model, type: type)
                 completion(Result.success(result))
                 return Result.success(result)
             }
@@ -570,10 +571,11 @@ public class Connection {
     public func post<T : RESTObject>(
         path: String,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<Bool, Error>) -> Void) {
         _ = Task { () -> Result<Bool, Error> in
             do {
-                let _ : Bool = try await self.post(path: path, model: model)
+                let _ : Bool = try await self.post(path: path, model: model, type: type)
                 completion(Result.success(true))
                 return Result.success(true)
             }
@@ -597,11 +599,11 @@ public class Connection {
     ///     success or failure as the payload. Any additional information is
     ///     contained in the connection.info property
     /// - Returns: a RESTObject derived object as returned from the server.
-    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T) async throws -> U? {
+    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T, type: ContentType = .json) async throws -> U? {
         var data : Data? = nil
         let urlString = buildUrlString(parts: path, id ?? "")
         do {
-            data = try await doRequestFor(url: urlString, method: .put, model: model)
+            data = try await doRequestFor(url: urlString, method: .put, model: model, contentType: type)
         }
         catch
         {
@@ -631,10 +633,10 @@ public class Connection {
     ///     success or failure as the payload. Any additional information is
     ///     contained in the connection.info property
     /// - Returns: a bool as success or failure
-    public func put<T: RESTObject>(path: String, id: String?, model: T) async throws -> Bool {
+    public func put<T: RESTObject>(path: String, id: String?, model: T, type: ContentType = .json) async throws -> Bool {
         let urlString = buildUrlString(parts: path, id ?? "")
         do {
-            _ = try await doRequestFor(url: urlString, method: .put, model: model)
+            _ = try await doRequestFor(url: urlString, method: .put, model: model, contentType: type)
             return true
         }
         catch
@@ -658,10 +660,11 @@ public class Connection {
         path: String,
         id: String?,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<U?, Error>) -> Void) {
         _ = Task { () -> Result<U?, Error> in
             do {
-                let result : U? = try await self.put(path: path, id: id, model: model)
+                let result : U? = try await self.put(path: path, id: id, model: model, type: type)
                 completion(Result.success(result))
                 return Result.success(result)
             }
@@ -686,10 +689,11 @@ public class Connection {
         path: String,
         id: String?,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<Bool, Error>) -> Void) {
         _ = Task { () -> Result<Bool, Error> in
             do {
-                let _ : Bool = try await self.put(path: path, id: id, model: model)
+                let _ : Bool = try await self.put(path: path, id: id, model: model, type: type)
                 completion(Result.success(true))
                 return Result.success(true)
             }
