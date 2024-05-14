@@ -18,6 +18,7 @@
 
 
 import Foundation
+import FoundationNetworking
 
 public enum ConnectionError: Error {
     case requestError(String)
