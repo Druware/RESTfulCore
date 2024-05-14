@@ -126,6 +126,8 @@ public class Player : RESTObject, Identifiable {
         hasher.combine(playerId)
         hasher.combine(playerName)
     }
+    
+    // MARK: Multipart Protocol
 }
 
 // MARK: Connection Methods

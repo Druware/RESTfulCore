@@ -31,6 +31,15 @@ internal enum RequestMethod : String {
     case post = "POST"
     case put = "PUT"
     case delete = "DELETE"
+    case head = "HEAD"
+}
+
+public enum ContentType : String {
+    case json = "application/json"
+    case multiPart = "multipart/form-data"
+    // formURLEncoded
+    // text
+    // xml
 }
 
 /// The Connection object is the root of all server communication with the API,
@@ -40,9 +49,27 @@ internal enum RequestMethod : String {
 public class Connection {
     
     private var rootPath : String
-    public var info : [String]? = nil
     private var urlSession : URLSession
     
+    public var info : [String]? = nil
+    public var hostStatus : Bool {
+        get {
+            let urlString = rootPath
+            Task {
+                do {
+                    _ = try await doRequestFor(url: urlString, method: .head)
+                    return true
+                }
+                catch
+                {
+                    setInfo("Error during request")
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     /// The core initialiizer for a Connection, with the basePath being the
     /// hostPath ( including the [http/https]://hostname portion of the path )
     /// - Parameter basePath: <#basePath description#>
@@ -100,11 +127,16 @@ public class Connection {
     }
     
     private func resetInfo() {
-        if (info != nil) { info?.removeAll() }
+        if (info != nil && info?.count ?? 0 > 0) {
+            info?.removeAll()
+            info = nil
+        }
     }
     
-    private func doRequestFor(url: String, method: RequestMethod = .get,
-                              model: RESTObject? = nil) async throws -> Data? {
+    private func doRequestFor(url: String, 
+                              method: RequestMethod = .get,
+                              model: RESTObject? = nil,
+                              contentType: ContentType = .json) async throws -> Data? {
         resetInfo()
         let _url = URL(string: url)
         
@@ -115,18 +147,30 @@ public class Connection {
         var request : URLRequest = URLRequest(url: _url!)
         
         request.httpMethod = method.rawValue
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type") // the request is JSON
         request.setValue("application/json", forHTTPHeaderField: "Accept") // the response expected to be in JSON format
         
+        // if this is a multiPart, instead of using the JSONEncoder, use
+        // a MultipartEncoding ( if it is supported by the object, otherwise,
+        // throw an error )
         if (model != nil) {
-            let encoder : JSONEncoder = JSONEncoder()
-            do
-            {
-                let jsonData = try encoder.encode(model)
-                request.httpBody = jsonData
-            } catch {
-                self.setInfo("Failed, Unable to Encode the Model")
-                throw error
+            if (contentType == .multiPart) {
+                if let mp = model as? MultipartForm {
+                    let mpr = mp.multipartRequest()
+                    request.setValue(mpr?.header, forHTTPHeaderField: "Content-Type")
+                    request.httpBody = mpr?.body
+                }
+            } else {
+                // JSON
+                let encoder : JSONEncoder = JSONEncoder()
+                do
+                {
+                    let jsonData = try encoder.encode(model)
+                    request.setValue(contentType.rawValue, forHTTPHeaderField: "Content-Type") // the request is JSON
+                    request.httpBody = jsonData
+                } catch {
+                    self.setInfo("Failed, Unable to Encode the Model")
+                    throw error
+                }
             }
         }
         
@@ -421,11 +465,11 @@ public class Connection {
     ///   - RESTObject, assuming a result code of 200, and in any other case a
     ///     nil value, with the connection.info array containing the details of
     ///     the action
-    public func post<T: RESTObject, U: RESTObject>(path: String, model: T) async throws -> U? {
+    public func post<T: RESTObject, U: RESTObject>(path: String, model: T, type: ContentType = .json) async throws -> U? {
         var data : Data? = nil
         let urlString = buildUrlString(parts: path)
         do {
-            data = try await doRequestFor(url: urlString, method: .post, model: model)
+            data = try await doRequestFor(url: urlString, method: .post, model: model, contentType: type)
         }
         catch
         {
@@ -458,10 +502,10 @@ public class Connection {
     ///   - model: A model that inherits from the RESTObject base type
     /// - Returns:
     ///   - bool, assuming a result code of 200-204
-    public func post<T: RESTObject>(path: String, model: T) async throws -> Bool {
+    public func post<T: RESTObject>(path: String, model: T, type: ContentType = .json) async throws -> Bool {
         let urlString = buildUrlString(parts: path)
         do {
-            let _ : Data? = try await doRequestFor(url: urlString, method: .post, model: model)
+            let _ : Data? = try await doRequestFor(url: urlString, method: .post, model: model, contentType: type)
             return true
         }
         catch
@@ -492,10 +536,11 @@ public class Connection {
     public func post<T : RESTObject, U : RESTObject>(
         path: String,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<U?, Error>) -> Void) {
         _ = Task { () -> Result<U?, Error> in
             do {
-                let result : U? = try await self.post(path: path, model: model)
+                let result : U? = try await self.post(path: path, model: model, type: type)
                 completion(Result.success(result))
                 return Result.success(result)
             }
@@ -527,10 +572,11 @@ public class Connection {
     public func post<T : RESTObject>(
         path: String,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<Bool, Error>) -> Void) {
         _ = Task { () -> Result<Bool, Error> in
             do {
-                let _ : Bool = try await self.post(path: path, model: model)
+                let _ : Bool = try await self.post(path: path, model: model, type: type)
                 completion(Result.success(true))
                 return Result.success(true)
             }
@@ -554,11 +600,11 @@ public class Connection {
     ///     success or failure as the payload. Any additional information is
     ///     contained in the connection.info property
     /// - Returns: a RESTObject derived object as returned from the server.
-    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T) async throws -> U? {
+    public func put<T: RESTObject, U: RESTObject>(path: String, id: String?, model: T, type: ContentType = .json) async throws -> U? {
         var data : Data? = nil
         let urlString = buildUrlString(parts: path, id ?? "")
         do {
-            data = try await doRequestFor(url: urlString, method: .put, model: model)
+            data = try await doRequestFor(url: urlString, method: .put, model: model, contentType: type)
         }
         catch
         {
@@ -588,10 +634,10 @@ public class Connection {
     ///     success or failure as the payload. Any additional information is
     ///     contained in the connection.info property
     /// - Returns: a bool as success or failure
-    public func put<T: RESTObject>(path: String, id: String?, model: T) async throws -> Bool {
+    public func put<T: RESTObject>(path: String, id: String?, model: T, type: ContentType = .json) async throws -> Bool {
         let urlString = buildUrlString(parts: path, id ?? "")
         do {
-            _ = try await doRequestFor(url: urlString, method: .put, model: model)
+            _ = try await doRequestFor(url: urlString, method: .put, model: model, contentType: type)
             return true
         }
         catch
@@ -615,10 +661,11 @@ public class Connection {
         path: String,
         id: String?,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<U?, Error>) -> Void) {
         _ = Task { () -> Result<U?, Error> in
             do {
-                let result : U? = try await self.put(path: path, id: id, model: model)
+                let result : U? = try await self.put(path: path, id: id, model: model, type: type)
                 completion(Result.success(result))
                 return Result.success(result)
             }
@@ -643,10 +690,11 @@ public class Connection {
         path: String,
         id: String?,
         model: T,
+        type: ContentType = .json,
         completion: @escaping (Result<Bool, Error>) -> Void) {
         _ = Task { () -> Result<Bool, Error> in
             do {
-                let _ : Bool = try await self.put(path: path, id: id, model: model)
+                let _ : Bool = try await self.put(path: path, id: id, model: model, type: type)
                 completion(Result.success(true))
                 return Result.success(true)
             }
