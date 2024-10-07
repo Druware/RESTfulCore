@@ -18,7 +18,10 @@
 
 
 import Foundation
+
+#if os(Windows)
 import FoundationNetworking
+#endif
 
 public enum ConnectionError: Error {
     case requestError(String)
