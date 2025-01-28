@@ -52,7 +52,7 @@ final class RESTfulCoreTests: XCTestCase {
 
         let connection = Connection(basePath: rootPath)
        
-        let players: [Player]? = try await connection.list(path: path)
+        let players: [Player]? = try await connection.list<Player>(Player.self, path: path)
         if (players == nil) {
             print(connection.info!)
         }
@@ -60,7 +60,6 @@ final class RESTfulCoreTests: XCTestCase {
         XCTAssertNotNil(players, "Result is nil")
         XCTAssertTrue(players?.count ?? 0 > 1, "Players.Count is not greater than 1")
         // XCTAssertTrue(player?.playerName == "Mickey Mouse", "PlayerName is not 'Mickey Mouse'")
-
     }
     
     func testConnectionGet() {
