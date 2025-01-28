@@ -322,13 +322,12 @@ public class Connection {
     /// - parameter path:
     /// - parameter completion: a closure
     /// - returns: an array of RESTObjects as defined by the generic T
-    /*public func list<T : RESTObject>(path: String,
-                                    page: Int32 = 0,
-                                    perPage: Int32 = 50,
+    public func list<T : RESTObject>(_ type: T.Type = T.self,
+                                    path: String,
                                     completion: @escaping (Result<[T]?, Error>) -> Void) {
         _ = Task { () -> Result<[T]?, Error> in
             do {
-                let result : [T]? = try await self.list<T>(path: path, page: page, perPage: perPage)
+                let result : [T]? = try await self.list<T>(T.self, path: path)
                 // call the completion closure
                 completion(Result.success(result))
                 return Result.success(result)
@@ -338,7 +337,7 @@ public class Connection {
                 return Result.failure(error)
             }
         }
-    }*/
+    }
     
     /// request an array list from the server path, where the resulting array is
     /// an array / list of typed object based upon the RESTObject Base object.
