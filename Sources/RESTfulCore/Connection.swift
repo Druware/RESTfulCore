@@ -327,7 +327,7 @@ public class Connection {
                                     completion: @escaping (Result<[T]?, Error>) -> Void) {
         _ = Task { () -> Result<[T]?, Error> in
             do {
-                let result : [T]? = try await self.list<T>(T.self, path: path)
+                let result : [T]? = try await self.list(T.self, path: path)
                 // call the completion closure
                 completion(Result.success(result))
                 return Result.success(result)

@@ -52,7 +52,7 @@ final class RESTfulCoreTests: XCTestCase {
 
         let connection = Connection(basePath: rootPath)
        
-        let players: [Player]? = try await connection.list<Player>(Player.self, path: path)
+        let players: [Player]? = try await connection.list(Player.self, path: path)
         if (players == nil) {
             print(connection.info!)
         }
@@ -302,3 +302,4 @@ final class RESTfulCoreTests: XCTestCase {
     
     
 }
+
